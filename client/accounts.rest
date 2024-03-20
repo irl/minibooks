@@ -1,0 +1,40 @@
+### Get list of accounts
+GET http://localhost:8080/api/v1/account/list
+Accept: application/json
+
+### Get balance of cash account
+GET http://localhost:8080/api/v1/account/00000100
+Accept: application/json
+
+### Create an account for Client A
+POST http://localhost:8080/api/v1/account/new
+Accept: application/json
+Content-Type: application/json
+
+{
+  "account_type": "CurrentLiability",
+  "account_name": "Client A"
+}
+
+### Get balance of Client A account
+GET http://localhost:8080/api/v1/account/00000200
+Accept: application/json
+
+### Make a deposit into Client A's account
+POST http://localhost:8080/api/v1/journal/new
+Accept: application/json
+Content-Type: application/json
+
+{
+  "unstructured_narrative": "Cash deposit for Client A",
+  "entries": [
+    {
+      "account": 100,
+      "amount": 10
+    },
+    {
+      "account": 200,
+      "amount": -10
+    }
+  ]
+}
