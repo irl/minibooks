@@ -55,6 +55,8 @@ CREATE TABLE settings
     strValue TEXT
 );
 
+INSERT OR REPLACE INTO settings (name, strValue) VALUES ('entityName', 'Example Entity');
+
 /* Asset Accounts 100-199 */
 INSERT OR REPLACE INTO settings (name, intValue) VALUES ('nextAccountCash', 101);
 INSERT OR REPLACE INTO settings (name, intValue) VALUES ('nextAccountCurrentAsset', 120);

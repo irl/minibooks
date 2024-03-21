@@ -1,10 +1,13 @@
 use std::str::FromStr;
-use serde::{Deserialize, Serialize};
-use actix_web::{get, post, web};
+
+use actix_web::{get, HttpResponse, post, Responder, web};
 use actix_web::web::Data;
+use serde::{Deserialize, Serialize};
+use tera::Context;
+
 use crate::{AppState, ledger};
-use crate::db::{AccountType};
-use crate::ledger::JournalEntry;
+use crate::ledger::{AccountSummary, AccountType, JournalEntry};
+use crate::settings::get_settings_str;
 
 #[derive(Serialize)]
 struct AccountDetailResponse {
@@ -19,7 +22,7 @@ struct AccountDetailResponse {
 
 #[get("/account/{account_id}")]
 pub async fn account_detail(state: Data<AppState>, path: web::Path<(i64, )>) -> web::Json<AccountDetailResponse> {
-    let account_id = path.into_inner().0;
+   let account_id = path.into_inner().0;
     let result = ledger::account_detail(&state.db, account_id).await.unwrap();
     web::Json(AccountDetailResponse {
         account_name: result.account_name,
@@ -108,13 +111,82 @@ struct JournalCreateResponse;
 
 #[post("/journal/new")]
 pub async fn journal_new(state: Data<AppState>, item: web::Json<JournalCreateData>) -> web::Json<JournalCreateResponse> {
-    let journal_entries: Vec<JournalEntry> = item.clone().entries
+    let item = item.clone();
+    let journal_entries: Vec<JournalEntry> = item.entries
         .into_iter()
         .map(|e| JournalEntry {
             account: e.account,
             amount: e.amount,
         })
         .collect();
-    ledger::journal_new(&state.db, &item.unstructured_narrative, journal_entries).await.unwrap();
+    ledger::journal_new(&state.db, item.unstructured_narrative.unwrap_or("".to_string()), journal_entries).await.unwrap();
     web::Json(JournalCreateResponse {})
+}
+
+fn filter_accounts_list<F>(accounts: &Vec<AccountSummary>, f: F) -> Vec<AccountSummary>
+    where F: Fn(&AccountSummary) -> bool {
+    accounts
+        .clone()
+        .into_iter()
+        .filter(f)
+        .collect()
+}
+
+fn sum_filter_accounts_list<F>(accounts: &Vec<AccountSummary>, f: F) -> i64
+    where F: Fn(&AccountSummary) -> bool
+{
+    accounts
+        .clone()
+        .into_iter()
+        .filter(f)
+        .map(|a| a.account_balance)
+        .sum()
+}
+
+#[get("/report/balance")]
+pub async fn report_balance_sheet(state: Data<AppState>) -> impl Responder {
+    let mut ctx = Context::new();
+    let entity_name = get_settings_str(&state.db, "entityName").await.unwrap();
+    ctx.insert("entity_name", &entity_name);
+    let accounts = ledger::account_list(&state.db).await.unwrap();
+
+    let cash: Vec<AccountSummary> = filter_accounts_list(&accounts, |a| a.account_type == AccountType::Cash);
+    ctx.insert("cash", &cash);
+
+    let total_cash = sum_filter_accounts_list(
+        &accounts, |a| a.account_type == AccountType::Cash);
+    ctx.insert("total_cash", &total_cash);
+
+    let current_assets: Vec<AccountSummary> = filter_accounts_list(&accounts, |a| {
+        match a.account_type {
+            AccountType::CurrentAsset => true,
+            AccountType::Inventory => true,
+            AccountType::Prepayments => true,
+            _ => false,
+        }
+    });
+    ctx.insert("current_assets", &current_assets);
+
+    let total_current_assets = sum_filter_accounts_list(&accounts, |a| match a.account_type {
+            AccountType::Cash => true,
+            AccountType::CurrentAsset => true,
+            AccountType::Inventory => true,
+            AccountType::Prepayments => true,
+            _ => false,
+        });
+    ctx.insert("total_current_assets", &total_current_assets);
+
+    let current_liabilities: Vec<AccountSummary> = filter_accounts_list(
+        &accounts, |a| a.account_type == AccountType::CurrentLiability);
+    ctx.insert("current_liabilities", &current_liabilities);
+
+    let total_current_liabilities: i64 = sum_filter_accounts_list(
+        &accounts, |a| a.account_type == AccountType::CurrentLiability);
+    ctx.insert("total_current_liabilities", &total_current_liabilities);
+
+    let net_assets = total_current_assets + total_current_liabilities;
+    ctx.insert("net_assets", &net_assets);
+
+    let rendered = state.tmpl.render("balance_sheet.html", &ctx).unwrap();
+    HttpResponse::Ok().body(rendered)
 }
